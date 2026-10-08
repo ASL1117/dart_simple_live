@@ -10,6 +10,9 @@ jobs:
   build-ios:
     runs-on: macos-15
     timeout-minutes: 45
+    env:
+      # connectivity_plus 7.1+ requires the iOS 26 SDK; the runner defaults to Xcode 16.4.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     defaults:
       run:
         shell: bash
