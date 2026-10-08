@@ -48,7 +48,7 @@ jobs:
           test -f "$app_path/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Info.plist"
-          xcrun lipo -verify_arch arm64 "$app_path/Runner"
+          xcrun lipo "$app_path/Runner" -verify_arch arm64
           mkdir -p build/ios/sideload/Payload
           ditto "$app_path" build/ios/sideload/Payload/Runner.app
           cd build/ios/sideload
