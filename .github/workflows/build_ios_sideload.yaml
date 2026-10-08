@@ -1,0 +1,65 @@
+name: Build iOS sideload IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: simple_live_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.x"
+          channel: stable
+          cache: true
+
+      - name: Check build environment
+        run: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+
+      - name: Restore packages
+        run: flutter pub get
+
+      # Sideload tools sign the IPA with the user's own account or certificate.
+      - name: Build unsigned iOS app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package and verify IPA
+        run: |
+          set -euo pipefail
+          app_path="build/ios/iphoneos/Runner.app"
+          test -f "$app_path/Runner"
+          test -f "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Info.plist"
+          xcrun lipo -verify_arch arm64 "$app_path/Runner"
+          mkdir -p build/ios/sideload/Payload
+          ditto "$app_path" build/ios/sideload/Payload/Runner.app
+          cd build/ios/sideload
+          # Preserve framework symlinks in the IPA archive.
+          zip -q -r -y SimpleLive-unsigned.ipa Payload
+          unzip -tq SimpleLive-unsigned.ipa
+          shasum -a 256 SimpleLive-unsigned.ipa > SimpleLive-unsigned.ipa.sha256
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-iOS-unsigned
+          path: |
+            simple_live_app/build/ios/sideload/SimpleLive-unsigned.ipa
+            simple_live_app/build/ios/sideload/SimpleLive-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
