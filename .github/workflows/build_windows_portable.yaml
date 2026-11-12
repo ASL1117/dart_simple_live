@@ -1,0 +1,60 @@
+name: Build Windows portable ZIP
+
+on:
+  push:
+    branches: [codex/build-windows]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.10'
+          channel: stable
+          cache: true
+      - name: Build Windows release
+        working-directory: simple_live_app
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter build windows --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Include Visual C++ runtime and package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $env:GITHUB_WORKSPACE 'simple_live_app/build/windows/x64/runner/Release'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual C++ installation not found' }
+          $crt = Get-ChildItem (Join-Path $vs 'VC/Redist/MSVC') -Filter Microsoft.VC143.CRT -Directory -Recurse |
+            Where-Object { $_.Parent.Name -eq 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'Visual C++ x64 runtime not found' }
+          foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            Copy-Item -LiteralPath (Join-Path $crt.FullName $dll) -Destination $release
+          }
+          foreach ($required in @('simple_live_app.exe', 'flutter_windows.dll', 'data/app.so', 'data/icudtl.dat')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $release $required))) { throw "Missing $required" }
+          }
+          if (-not (Get-ChildItem $release -Filter '*mpv*.dll')) { throw 'Player runtime not found' }
+          $version = (Select-String -Path 'simple_live_app/pubspec.yaml' -Pattern '^version:\s*(\S+)').Matches[0].Groups[1].Value
+          $destination = Join-Path $env:GITHUB_WORKSPACE 'dist/windows'
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          $archive = Join-Path $destination "SimpleLive-$version-windows-x64.zip"
+          Compress-Archive -Path "$release/*" -DestinationPath $archive
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLower()
+          "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimpleLive-Windows-x64
+          path: dist/windows/*
+          if-no-files-found: error
+          retention-days: 30
